@@ -114,7 +114,8 @@ async def _prompt_websocket(sess: PromptSession, callbacks: Callbacks) -> None:
                         await callbacks.in_progress(current_node, 0, 0)
                 # Handle completion of the request.
                 if message["type"] == "executed":
-                    assert message["data"]["prompt_id"] == sess.prompt_id
+                    #Sometime the prompt id is different if the result come from cache
+                    #assert message["data"]["prompt_id"] == sess.prompt_id
                     await callbacks.completed(message["data"]["output"], False)
                     break
                 # Handle progress on a node.
@@ -196,6 +197,7 @@ class ComfyAPI:
                         raise ValueError("\n" + "\n".join(errors))
 
                     prompt_id = response_json['prompt_id']
+                    logger.debug("Prompt ID: %s", prompt_id)
                 except aiohttp.client_exceptions.ContentTypeError as e:
                     text= await resp.text()
                     logger.error("Error, unexpected response, not a json response. %s \nReceived : \n%s", e, text)
