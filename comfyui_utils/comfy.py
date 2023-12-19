@@ -18,6 +18,8 @@ from io import BytesIO
 import aiohttp
 import aiohttp.client_exceptions
 
+logger= logging.getLogger("comfyui_utils").getChild("comfy")
+
 # Inherit this class to specify callbacks during prompt execution.
 class Callbacks(abc.ABC):
     @abc.abstractmethod
@@ -31,7 +33,7 @@ class Callbacks(abc.ABC):
         """Called when the prompt completes, with the final output."""
     @abc.abstractmethod
     async def image_received(self, image: Image.Image):
-        """Called when the prompt's queue return a preview image, a pillow image object is pass to this function"""
+        """Called when the prompt's queue return a sample image, a pillow image object is pass to this function"""
 
 
 StrDict = dict[str, Any]  # parsed JSON of an API-formatted ComfyUI workflow.
@@ -70,7 +72,7 @@ async def _get_queue_position_or_cached_result(sess: PromptSession) -> Union[int
     async with sess.session.get(f"http://{sess.address}/queue") as queue_resp:
         queue = await queue_resp.json()
         queue = _parse_queue(queue)
-        # logging.warning("QUEUE: %s", queue)
+        logger.debug("QUEUE: %s", queue)
         if sess.prompt_id in queue: # Prompt is queued.
             return queue.index(sess.prompt_id)
         # Prompt is cached, so not queued. Have to fetch output info from history.
@@ -90,11 +92,12 @@ async def _prompt_websocket(sess: PromptSession, callbacks: Callbacks) -> None:
     async with sess.session.ws_connect(f"ws://{sess.address}/ws?clientId={sess.client_id}") as ws:
         current_node = None
         async for msg in ws:
-            # logging.warning(msg)
             if msg.type == aiohttp.WSMsgType.ERROR:
+                logger.debug("WS Error message received : %r", msg.data)
                 raise BrokenPipeError(f"WebSocket error: {msg.data}")
             if msg.type == aiohttp.WSMsgType.TEXT:
                 message = json.loads(msg.data)
+                logger.debug("Text message received\n%s", msg.data)
                 # Handle prompt being started.
                 if message["type"] == "status":
                     queue_or_result = await _get_queue_position_or_cached_result(sess)
@@ -124,7 +127,7 @@ async def _prompt_websocket(sess: PromptSession, callbacks: Callbacks) -> None:
                 if image is not None:
                     await callbacks.image_received(image)
             else:
-                logging.warning("Not text message, message type: %r", msg.type)            
+                logger.warning("Not text message, message type: %r", msg.type)            
 
 
 async def receive_image(image_data) -> Optional[Image.Image]:
@@ -140,7 +143,7 @@ async def receive_image(image_data) -> Optional[Image.Image]:
         elif type_num == 2:
             image_type= "PNG"
         else:
-            logging.error("Unsuported type received : %d", type_num)
+            logger.error("Unsuported type received : %d", type_num)
             return None
         
         if event_type_num == 1:
@@ -149,12 +152,12 @@ async def receive_image(image_data) -> Optional[Image.Image]:
             event_type= "UNENCODED_PREVIEW_IMAGE"
         else:
             event_type= f"UNKNOWN {event_type_num}"
-        logging.info(f"Received an {image_type} ({event_type})")
+        logger.info(f"Received an {image_type} ({event_type})")
         bytesIO = BytesIO(image_data[8:])
         image= Image.open(bytesIO)
         return image        
     except Exception as e:
-        logging.exception("Error on receiving image.")
+        logger.exception("Error on receiving image.")
     return None
 
 class ComfyAPI:
@@ -182,7 +185,7 @@ class ComfyAPI:
             async with session.post(f"http://{self.address}/prompt", data=init_data) as resp:
                 try:
                     response_json = await resp.json()
-                    logging.info(response_json)
+                    logger.info(response_json)
                     if "error" in response_json:
                         if "node_errors" not in response_json:
                             raise ValueError(response_json["error"]["message"])
@@ -195,7 +198,7 @@ class ComfyAPI:
                     prompt_id = response_json['prompt_id']
                 except aiohttp.client_exceptions.ContentTypeError as e:
                     text= await resp.text()
-                    logging.error("Error, unexpected response, not a json response. %s \nReceived : \n%s", e, text)
+                    logger.error("Error, unexpected response, not a json response. %s \nReceived : \n%s", e, text)
                     raise ValueError("Not a JSON response : \n%s" % text)
                     
             # Listen on a websocket until the prompt completes and invoke callbacks.
