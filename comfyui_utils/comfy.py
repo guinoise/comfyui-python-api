@@ -200,7 +200,7 @@ class ComfyAPI:
                     
             # Listen on a websocket until the prompt completes and invoke callbacks.
             await _prompt_websocket(PromptSession(
-                client_id=client_id,
+                client_id=self.client_id,
                 prompt_id=prompt_id,
                 prompt=prompt,
                 session=session,
