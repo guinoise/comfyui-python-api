@@ -160,6 +160,8 @@ async def receive_image(image_data) -> Optional[Image.Image]:
 class ComfyAPI:
     def __init__(self, address):
         self.address = address
+        self.client_id = str(uuid.uuid4())
+        
 
     async def fetch(self, filename: str, callback: Callable[[io.BytesIO], None]):
         """Fetch a generated piece of data from Comfy.
@@ -171,10 +173,9 @@ class ComfyAPI:
                     await callback(data_file)
 
     async def submit(self, prompt: StrDict, callbacks: Callbacks):
-        client_id = str(uuid.uuid4())
         init_data = json.dumps({
             "prompt": prompt,
-            "client_id": client_id
+            "client_id": self.client_id
         }).encode('utf-8')
         async with aiohttp.ClientSession() as session:
             # Enqueue and get prompt ID.
