@@ -17,6 +17,7 @@ from PIL import Image
 from io import BytesIO
 import aiohttp
 import aiohttp.client_exceptions
+from dot4dict import dotdict
 
 logger= logging.getLogger("comfyui_utils").getChild("comfy")
 
@@ -165,7 +166,22 @@ class ComfyAPI:
     def __init__(self, address):
         self.address = address
         self.client_id = str(uuid.uuid4())
-        
+
+    async def get_object_info(self, class_type: str) -> Optional[dotdict]:
+        """Fetch object info from ComfyUI
+
+        Args:
+            class_type (str): Object class type to retrieve
+
+        Returns:
+            Optional[dict]: A dotdict (dict accessible by dot notation via json.loads) of the object if found, none otherwise
+        """
+        async with aiohttp.ClientSession() as session:    
+            async with session.get(f"http://{self.address}/object_info/{class_type}") as object_resp:
+                json_resp= await object_resp.json()
+                obj= dotdict(json_resp)
+                return obj.get(class_type, None)
+
 
     async def fetch(self, filename: str, callback: Callable[[io.BytesIO], None]):
         """Fetch a generated piece of data from Comfy.
