@@ -33,7 +33,7 @@ class Callbacks(abc.ABC):
         """Called when the prompt completes, with the final output."""
     @abc.abstractmethod
     async def image_received(self, image: Image.Image):
-        """Called when the prompt's queue return a sample image, a pillow image object is pass to this function"""
+        """Called when the prompt's queue return a sampler image, a pillow image object is pass to this function"""
 
 
 StrDict = dict[str, Any]  # parsed JSON of an API-formatted ComfyUI workflow.
