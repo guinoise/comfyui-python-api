@@ -68,7 +68,7 @@ async def _get_queue_position_or_cached_result(sess: PromptSession) -> Union[int
     async with sess.session.get(f"http://{sess.address}/queue") as queue_resp:
         queue = await queue_resp.json()
         queue = _parse_queue(queue)
-        # logging.warning("QUEUE: %s", queue)
+        logger.debug("Prompt id : %s QUEUE: %s", sess.prompt_id, queue)
         if sess.prompt_id in queue: # Prompt is queued.
             return queue.index(sess.prompt_id)
         # Prompt is cached, so not queued. Have to fetch output info from history.
@@ -83,6 +83,14 @@ async def _get_queue_position_or_cached_result(sess: PromptSession) -> Union[int
             for node_id, node_result in cached_outputs.items():
                 result= node_result
                 result['node']= node_id
+                #Some custom nodes output texts as an array of single characters, fix the output here.
+                text_result= result.get('text', None)
+                if issubclass(type(text_result), list):
+                    for c in text_result:
+                        if len(c) != 1 or not issubclass(type(c), str):
+                            break
+                    else:
+                        result['text']= [''.join(text_result)]
                 results.append(result)
             return results
 
@@ -114,9 +122,13 @@ async def _prompt_websocket(sess: PromptSession, callbacks: Callbacks) -> None:
                         await callbacks.in_progress(current_node, 0, 0)
                 # Handle completion of the request.
                 if message["type"] == "executed":
-                    assert message["data"]["prompt_id"] == sess.prompt_id
-                    await callbacks.completed(message["data"]["output"], False)
-                    break
+                    #Sometime the prompt id is different if the result come from cache
+                    #assert message["data"]["prompt_id"] == sess.prompt_id
+                    #Check if still running. Can have multiple executed
+                    queue_or_result = await _get_queue_position_or_cached_result(sess)
+                    if not isinstance(queue_or_result, int):
+                        await callbacks.completed(queue_or_result, False)
+                        break
                 # Handle progress on a node.
                 if message["type"] == "progress":
                     progress = int(message["data"]["value"])
