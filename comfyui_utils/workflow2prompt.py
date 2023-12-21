@@ -82,6 +82,7 @@ class NodeInput:
     value: Any
     input_type: NodeInputType
     widget_index: Optional[int]
+    dirty: bool= False
     
 class Node:
     id: int
@@ -102,6 +103,8 @@ class Node:
         self.id= self._data.id
         self.class_type= self._data["type"]
         self.disabled= self._data.mode in [2,4]
+        if "outputs" not in self._data:
+            self.disabled= True
         self.inputs= None
         self.initialized= False
         
@@ -129,7 +132,7 @@ class Node:
                         possible_hidden_values+= len(_node_extra_widgets[k])
         else:
             node.disabled= True    
-            if "eroute" in node.class_type:
+            if ("eroute" in node.class_type):
                 logger.debug(f"DISABLING Node {node.id} of type {node.class_type}")
             else:
                 logger.warning(f"DISABLING Node {node.id} of type {node.class_type}")
@@ -144,11 +147,11 @@ class Node:
             logger.debug(f"Node {node.id} of type {node.class_type} has {len(node._info_input_names)} infos in the model and {(len(node_inputs) + len(widgets_values))} in the workflow and possibly {possible_hidden_values} hidden values.")
         widget_index= 0
         for input_index, input_name in enumerate(node._info_input_names):
+            if input_name in _node_skip_widgets:
+                logger.warning(f"Node {node.id} skipping widget {input_name}")
+                continue            
             for input in node_inputs:
                 if input.name == input_name:
-                    if input_name in _node_skip_widgets:
-                        logger.warning(f"Node {node.id} skipping widget {input_name}")
-                        continue
                     linkvalue= None
                     if input.link in links.keys():
                         linkvalue= links[input.link]
@@ -239,6 +242,7 @@ class Workflow:
     links: Dict[int, Link]
     object_infos: Dict[str, Dict]
     comfyapi_client: comfy.ComfyAPI
+    _dirty: bool
     
     def __init__(self, path: pathlib.Path, comfyapi_client: comfy.ComfyAPI):
         self.comfyapi_client= comfyapi_client
@@ -252,7 +256,7 @@ class Workflow:
         except Exception as e:
             logger.critical("Error loading json file %s : %s", path.name, e)
             raise e
-        
+       
     @classmethod
     async def load(cls, path: pathlib.Path, comfyapi_client: comfy.ComfyAPI):
         wf= cls(path, comfyapi_client)
@@ -260,14 +264,14 @@ class Workflow:
         wf.links: Dict[int, Link]= {}
         for l in wf._data.get("links", []):
             link= Link(*l)
-            logger.info(link)
+            logger.debug(link)
             wf.links[link.id]= link
             
         wf.nodes: Dict[int, Node]= {}
         for n in wf._data.get("nodes", []):
             node= await Node.create(n, wf.links, wf.comfyapi_client)
             wf.nodes[node.id]= node
-            logger.info(f"Node {node.id} disabled {node.disabled}")
+            logger.debug(f"Node {node.id} disabled {node.disabled}")
         wf.prune_source_links()
         return wf
     
@@ -294,7 +298,7 @@ class Workflow:
                 src_node= self.nodes[link.final_src_node]
 
             if link.final_src_node != link.src_node:
-                logger.info(f"Link {link.id} changed source {link.src_node}:{link.src_pos} to {link.final_src_node}:{link.final_src_pos}")        
+                logger.debug(f"Link {link.id} changed source {link.src_node}:{link.src_pos} to {link.final_src_node}:{link.final_src_pos}")        
 
     def find_link_by_dst(self, node: int, pos: int) -> Optional[Link]:
         for link in self.links.values():
@@ -308,6 +312,69 @@ class Workflow:
                 return link
         return None
 
+    def get_node(self, node_id: int) -> Optional[Node]:
+        return self.nodes.get(node_id, None)
+    
+    def get_node_value(self, node_id: int, input_name: str) -> Union[str, Link, None]:
+        """Retrieve a node value
+
+        Args:
+            node_id (int): the node id
+            input_name (str): the widget to retrieve
+
+        Returns:
+            Union[str, Link, None]: The value of the widget
+                                    The link object of a Link widget 
+                                    None if the widget is not found (or the value is None)
+        """
+        node= self.nodes.get(node_id, None)
+        if node is None:
+            logger.warning("Node %d not found", node_id)
+            return None
+       
+        input: NodeInput
+        for input in node.inputs:
+            if input.input_name == input_name:
+                return input.value
+
+        return None
+    
+    def set_node_value(self, node_id: int, input_name: str, value: str) -> bool:
+        """Set a node value, only for widget.
+
+        Args:
+            node_id (int): the node ID
+            input_name (str): the widget to change
+            value (str): the value of the widget to set.
+
+        Raises:
+            e: _description_
+
+        Returns:
+            bool: if success, false otherwise
+        """
+        node= self.nodes.get(node_id, None)
+        if node is None:
+            logger.warning("Node %d not found. Cannot change widget %s value.", node_id, input_name)
+            return False
+        
+        if node.disabled:
+            logger.warning("Node %d is disabled. Cannot change widget %s value.", node_id, input_name)
+            return False
+
+        input: NodeInput
+        for input in node.inputs:
+            if input.input_name == input_name:
+                if input.input_type != NodeInputType.WIDGET:
+                    logger.warning("Node %d, input %s is %s. Can only change widget values.", node_id, input_name, input.input_type.value)
+                    return False                    
+                input.value= value
+                self._dirty= True
+                return True
+        
+        logger.warning("Node %d, input %s not found.", node_id, input_name)
+        return False
+                    
     async def generate_api_workflow(self) -> Optional[dotdict]:
         api: dotdict= dotdict()
         node: Node
