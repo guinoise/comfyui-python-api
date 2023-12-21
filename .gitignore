@@ -2,3 +2,5 @@
 __pycache__/
 comfyui_utils.egg-info/
 dist/
+examples/out
+!examples/out/README.md
