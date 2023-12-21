@@ -10,14 +10,13 @@ import dataclasses
 import io
 import json
 import logging
-from typing import Any, Callable, Union, Optional
+from typing import Any, Callable, Union, Optional, List
 import uuid
 import struct
 from PIL import Image
 from io import BytesIO
 import aiohttp
 import aiohttp.client_exceptions
-
 # Inherit this class to specify callbacks during prompt execution.
 class Callbacks(abc.ABC):
     @abc.abstractmethod
@@ -64,8 +63,7 @@ class PromptSession:
     session: aiohttp.ClientSession
     address: str
 
-
-async def _get_queue_position_or_cached_result(sess: PromptSession) -> Union[int, StrDict]:
+async def _get_queue_position_or_cached_result(sess: PromptSession) -> Union[int, List[StrDict]]:
     """Returns """
     async with sess.session.get(f"http://{sess.address}/queue") as queue_resp:
         queue = await queue_resp.json()
@@ -80,8 +78,13 @@ async def _get_queue_position_or_cached_result(sess: PromptSession) -> Union[int
             if cached_id is None:
                 raise ValueError("Response seems cached, but not found in history!")
             cached_outputs = history[cached_id]["outputs"]
-            # TODO: support multiple outputs here and in the un-cached case.
-            return cached_outputs[next(iter(cached_outputs))]
+            # Put the node inside the result dict for convenience and return a list of results
+            results= []
+            for node_id, node_result in cached_outputs.items():
+                result= node_result
+                result['node']= node_id
+                results.append(result)
+            return results
 
 
 
@@ -161,14 +164,14 @@ class ComfyAPI:
     def __init__(self, address):
         self.address = address
 
-    async def fetch(self, filename: str, callback: Callable[[io.BytesIO], None]):
+    async def fetch(self, filename: str, callback: Callable[[io.BytesIO], None], *args, **kwargs):
         """Fetch a generated piece of data from Comfy.
             Invokes callback with an io.BytesIO object."""
         async with aiohttp.ClientSession() as session:
             async with session.get(f"http://{self.address}/view", params=filename) as resp:
                 data = await resp.read()
                 with io.BytesIO(data) as data_file:
-                    await callback(data_file)
+                    await callback(data_file, *args, **kwargs)
 
     async def submit(self, prompt: StrDict, callbacks: Callbacks):
         client_id = str(uuid.uuid4())
