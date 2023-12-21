@@ -20,12 +20,13 @@ import json
 from comfyui_utils import comfy
 from comfyui_utils import gen_prompts
 from PIL.Image import Image
+from dot4dict import dotdict
 
 async def run_base_and_refiner(address: str, user_string: str, output_path: pathlib.Path=None, sample_dir: pathlib.Path=None):
     comfyui = comfy.ComfyAPI(address)
 
     # Load the stored API format prompt.
-    with open("examples/workflows/sdxl.json", "r", encoding="utf-8") as f:
+    with open("examples/workflows/workflow_api_multi_out_1.json", "r", encoding="utf-8") as f:
         PROMPT_TEMPLATE = f.read()
     prompt = json.loads(PROMPT_TEMPLATE)
     # Config for parsing user arguments:
@@ -42,17 +43,12 @@ async def run_base_and_refiner(address: str, user_string: str, output_path: path
         logger.warning(warning)
     # Adjust the prompt with user args.
     prompt["6"]["inputs"]["text"] = parsed.cleaned
-    prompt["10"]["inputs"]["end_at_step"] = parsed.result.base_steps
-    prompt["11"]["inputs"]["start_at_step"] = parsed.result.base_steps
-    prompt["10"]["inputs"]["steps"] = parsed.result.base_steps + parsed.result.refiner_steps
-    prompt["10"]["inputs"]["noise_seed"] = parsed.result.seed
-    prompt["11"]["inputs"]["steps"] = parsed.result.base_steps + parsed.result.refiner_steps
 
     # Prepare result dictionary.
-    result = {
+    result: dotdict = dotdict({
         "output": {},
         "cached": False
-    }
+    })
     # Configure the callbacks which will write to it during execution while printing updates.
     class Callbacks(comfy.Callbacks):
         def __init__(self):
@@ -76,8 +72,8 @@ async def run_base_and_refiner(address: str, user_string: str, output_path: path
             elif node_id == 19:
                 logger.info("Saving image on backend...")
         async def completed(self, outputs, cached):
-            result["output"] = outputs
-            result["cached"] = cached
+            result.output = outputs
+            result.cached = cached
         async def image_received(self, image: Image):
             if sample_dir is not None:
                 sample_file= None
@@ -94,16 +90,47 @@ async def run_base_and_refiner(address: str, user_string: str, output_path: path
     except ValueError as e:
         logger.error("Error processing template: %s", e)
         return
-    logger.info(f"Result (cached: {'yes' if result['cached'] else 'no'}): {result['output']}")
+    logger.info(f"Received result. Chached: {'yes' if result['cached'] else 'no'} Number of output(s): {len(result['output'])}")
+    logger.debug(f"Result (cached: {'yes' if result['cached'] else 'no'}): {result['output']}")
 
-    # Write the result to a local file.
-    if output_path is not None:
-        backend_filepath = result["output"]["images"][0]
-        async def on_load(data_file : io.BytesIO):
-            with open(output_path, "wb") as f:
-                f.write(data_file.getbuffer())
-        logger.info("Saving backend image %s to %s", backend_filepath.get("filename", None), output_path)
-        await comfyui.fetch(backend_filepath, on_load)
+    save_images= (output_path is not None)
+
+    async def save_image(data_file : io.BytesIO, path: pathlib.Path):
+        #Search unique filename, appending _NN at the end of the filename if required
+        inc= 0
+        while path.exists():
+            inc+= 1
+            path= path.parent.joinpath(f"{path.stem}_{inc:02d}{path.suffix}")
+        logger.info(f"Saving fetched image into {path.name}")
+        with open(path, "wb") as f:
+            f.write(data_file.getbuffer())
+                
+    for node_result in result.output:
+        node_id= node_result.get('node')
+        if 'text' in node_result:
+            text= ('\n').join(node_result.get('text'))
+            logger.info(f"Text output from node {node_id} : {text}")
+        if 'images' in node_result:
+            for image_info in node_result['images']:
+                if image_info.get('subfolder','') != '':
+                    backend_filepath= f"{image_info['subfolder']}/{image_info['filename']}"
+                else:
+                    backend_filepath= image_info['filename']
+                if image_info.get('type', None) == 'output':
+                    logger.info(f"Node {node_id} produced an output image with filename {backend_filepath}")
+                    if save_images:
+                        await comfyui.fetch(backend_filepath, save_image, output_path)
+                else:
+                    logger.info(f"Node {node_id} produced a {image_info.get('type','UNKNOWN')} image with filename {backend_filepath}")
+                                            
+    # # Write the result to a local file.
+    # if output_path is not None:
+    #     backend_filepath = result["output"]["images"][0]
+    #     async def on_load(data_file : io.BytesIO):
+    #         with open(output_path, "wb") as f:
+    #             f.write(data_file.getbuffer())
+    #     logger.info("Saving backend image %s to %s", backend_filepath.get("filename", None), output_path)
+    #     await comfyui.fetch(backend_filepath, on_load)
 
 
 def main():
