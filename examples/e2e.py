@@ -46,7 +46,7 @@ async def run_base_and_refiner(address: str, user_string: str, output_path: path
 
     # Prepare result dictionary.
     result: dotdict = dotdict({
-        "output": {},
+        "output": [],
         "cached": False
     })
     # Configure the callbacks which will write to it during execution while printing updates.
