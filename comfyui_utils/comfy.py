@@ -167,6 +167,21 @@ class ComfyAPI:
         self.address = address
         self.client_id = str(uuid.uuid4())
 
+    async def get_all_object_info(self) -> Optional[dotdict]:
+        """Fetch object info from ComfyUI
+
+        Args:
+            class_type (str): Object class type to retrieve
+
+        Returns:
+            Optional[dict]: A dotdict (dict accessible by dot notation via json.loads) of the object if found, none otherwise
+        """
+        async with aiohttp.ClientSession() as session:            
+            async with session.get(f"http://{self.address}/object_info") as object_resp:
+                json_resp= await object_resp.json()
+                obj= dotdict(json_resp)
+                return obj
+
     async def get_object_info(self, class_type: str) -> Optional[dotdict]:
         """Fetch object info from ComfyUI
 
@@ -176,7 +191,7 @@ class ComfyAPI:
         Returns:
             Optional[dict]: A dotdict (dict accessible by dot notation via json.loads) of the object if found, none otherwise
         """
-        async with aiohttp.ClientSession() as session:    
+        async with aiohttp.ClientSession() as session:            
             async with session.get(f"http://{self.address}/object_info/{class_type}") as object_resp:
                 json_resp= await object_resp.json()
                 obj= dotdict(json_resp)
@@ -192,11 +207,18 @@ class ComfyAPI:
                 with io.BytesIO(data) as data_file:
                     await callback(data_file)
 
-    async def submit(self, prompt: StrDict, callbacks: Callbacks):
-        init_data = json.dumps({
-            "prompt": prompt,
-            "client_id": self.client_id
-        }).encode('utf-8')
+    async def submit(self, prompt: StrDict, callbacks: Callbacks, extra_data: Optional[dict]= None):
+        if extra_data is not None:
+            init_data = json.dumps({
+                "prompt": prompt,
+                "client_id": self.client_id,
+                "extra_data": extra_data
+            }).encode('utf-8')
+        else:            
+            init_data = json.dumps({
+                "prompt": prompt,
+                "client_id": self.client_id
+            }).encode('utf-8')
         async with aiohttp.ClientSession() as session:
             # Enqueue and get prompt ID.
             async with session.post(f"http://{self.address}/prompt", data=init_data) as resp:
